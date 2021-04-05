@@ -1,3 +1,236 @@
-% Development of Feedback Loop Algorithm for Pseudodynamic Testing
+% Pseudodynamic Algorithm for a SDOF system using Newmark Explicit Method
 
-% Will add new code soon
+clear all
+clc
+
+graphics_toolkit ("gnuplot")
+
+Reaction = load('RBase.txt');
+Displacement = load('DFree.txt');
+
+% Removing gravity load anlysis data
+
+R = D = zeros(length(Reaction)-9,1);
+
+D(2:length(D)) = Displacement(11:length(Reaction), 2);
+R(2:length(D)) = -Reaction(11:length(Reaction), 2);
+R = R/30; % Reducing stiffness value
+
+m = 254.34*10; % Mass of the system
+kini = (R(2)-R(1))/(D(2)-D(1)); %Initial Stiffness 
+z = 0.05; %Damping Ratio
+w = sqrt(kini/m); %natural frequency of the system 
+c = 2*m*w*z; %Viscous damping coefficient
+x(1) = 0; x1(1) = 0; %Initial conditions
+dt= 0.01; %Time step
+loop = 1; xpivot1 = 0;
+kk = 1;
+
+%Reading the earthquake file
+
+PP = load('northridge.txt');
+[row, column] = size(PP);
+if column == 2 && PP(1, 1) == 0.00
+  pp = -PP(:, 2)*9.81*m;
+else
+  if column > 2
+    for rr = 1:row
+      for cc = 1:column 
+        pp(kk,1) = -m*9.81*PP(rr, cc);
+        kk +=1;
+      endfor
+    endfor
+  else
+    pp = -m*9.81*PP(:, 2);
+  endif
+endif
+p = pp;
+
+% Reducing time step to 0.01 sec
+
+##p = zeros(2*length(pp) - 1, 1);
+##for ii = 1:length(pp)-1
+##  p(2*ii) = (pp(ii)+pp(ii+1))*0.5;
+##endfor
+##for ii = 1:length(pp)-1
+##  p(ii*2 - 1) = pp(ii);
+##endfor
+t = [0:dt:dt*(length(p)-1)];
+if p(1) < 0
+  p = -p;
+endif
+
+%Initial acceleration and restoring force
+
+x2(1) = (p(1) - c*x1(1) - kini*x(1))/m;
+fs(1) = kini*x(1);
+
+%Function to give the restoring force value using push-over curve
+
+function [r] = force(D, R, disp)
+  for j = 1:length(R)-1
+    if D(j) <= disp && D(j+1) >= disp
+      r = R(j) + (((disp)-D(j))/((D(j+1) - D(j))))*(R(j+1) - R(j));
+    endif
+  endfor
+endfunction
+
+%Loop arrangement for calculating the restoring force value
+
+for i = 1:length(p)-1
+  if loop == 1
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    xx = x(i+1) - xpivot1;
+    [r] = force(D, R, xx);
+    fs(i+1) = r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x1(i+1) <= 0
+      loop = 2;
+      k = kini;
+      xmax = x(i+1);
+      fmax = fs(i+1);
+      xpivot = xmax - fmax/kini;
+    endif
+  elseif loop == 2
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    r = fmax - kini*(xmax - x(i+1));
+    fs(i+1) = r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x(i+1) <= xpivot && x1(i+1) >= 0
+      loop = 4;
+      xx = xpivot - x(i+1);
+      r = force(D, R, xx);
+      fs(i+1) = -r;
+      xmin = x(i+1);
+      fmin = fs(i+1);
+      k = kini;
+      xpivot1 = xmin - fmin/kini;
+    elseif x(i+1) <= xpivot 
+      loop = 3;
+      xx = xpivot - x(i+1);
+      r = force(D, R, xx);
+      fs(i+1) = -r;
+    elseif x1(i+1) >= 0
+      loop = 5;
+      xp = x(i+1);
+      fp = fs(i+1);
+    endif
+  elseif loop == 3
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    xx = (xpivot - x(i+1));
+    r = force(D, R, xx);
+    fs(i+1) = -r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x1(i+1) >= 0
+      loop =  4;
+      xmin = x(i+1);
+      fmin = fs(i+1);
+      xpivot1 = xmin - fmin/kini;
+    endif
+  elseif loop == 4
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    r = fmin + kini*(x(i+1) - xmin);
+    fs(i+1) = r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x(i+1) >= xpivot1 && x1(i+1) <= 0;
+      loop = 2;
+      xx = x(i+1) - xpivot1;
+      r = force(D, R, xx);
+      fs(i+1) = r;
+      xmax = x(i+1);
+      fmax = fs(i+1);
+      xpivot = xmax - fmax/kini;
+    elseif x(i+1) >= xpivot1
+      loop = 1;
+      xx = x(i+1) - xpivot1;
+      r = force(D, R, xx);
+      fs(i+1) = r;
+    elseif x1(i+1) <= 0
+      loop = 6;
+      xp1 = x(i+1);
+      fp1 = fs(i+1);
+    endif    
+  elseif loop == 5
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    r = fp + kini*(x(i+1) - xp);
+    fs(i+1) = r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x(i+1) >= xmax && x1(i+1) <= 0
+      loop = 2;
+      xx = x(i+1) - xpivot1;
+      r = force(D, R, xx);
+      fs(i+1) = r;
+      xmax = x(i+1);
+      fmax = fs(i+1);
+      xpivot = xmax - fmax/kini;
+    elseif x(i+1) >= xmax
+      loop = 1;
+      xx= x(i+1) - xpivot1;
+      r = force(D, R, xx);
+      fs(i+1) = r;
+    elseif x1(i+1) <= 0
+      loop = 2;
+    endif
+  elseif loop == 6
+    x(i+1) = x(i) + dt*x1(i) + x2(i)*dt*dt*0.5;
+    r = fp1 - kini*(xp1 - x(i+1));
+    fs(i+1) = r;
+    x2(i+1) =  (p(i+1) - fs(i+1) - c*x1(i) - dt*0.5*c*x2(i))/(m + dt*0.5*c);
+    x1(i+1) = x1(i) + dt*0.5*(x2(i) + x2(i+1));
+    if x(i+1) <= xmin && x1(i+1) >= 0
+      loop = 4;
+      xx = xpivot - x(i+1);
+      r = force(D, R, xx);
+      fs(i+1) = -r;
+      xmin = x(i+1);
+      fmin = fs(i+1);
+      xpivot1 = xmin - fmin/kini;
+    elseif x(i+1) <= xmin
+      loop = 3;
+      xx = xpivot - x(i+1);
+      r= -force(D, R, xx);
+      fs(i+1) = r;
+    elseif x1(i+1) >= 0
+      loop = 4;
+      r = fmin + kini*(x(i+1) - xmin);
+      k = kini;
+      xpivot1 = xmin - fmin/kini;
+    endif
+  endif
+endfor
+
+%Plotting the response curves
+
+figure(1)
+grid minor;
+plot(t, x2, "linewidth",2)
+title("Acceleration response of a SDOF system subjected to El Centro earthquake", 'fontsize',16);
+xlabel('Time in ''seconds''', 'fontsize',16)
+ylabel('Acceleration in ''m/s^2''', 'fontsize',16)
+
+
+figure(2)
+plot(t, x1, "linewidth",2)
+title("Velocity response of a SDOF system subjected to El Centro earthquake", 'fontsize',16);
+xlabel('Time in ''seconds''', 'fontsize',16)
+ylabel('Velocity in ''m/s''', 'fontsize',16)
+grid minor;
+
+figure(3)
+plot(t, x, "linewidth",2)
+title("Displacement response of a SDOF system subjected to El Centro earthquake", 'fontsize',16);
+xlabel('Time in ''seconds''', 'fontsize',16)
+ylabel('Displacement in ''m''', 'fontsize',16)
+grid minor;
+
+figure(4)
+plot(x, fs, "linewidth",2)
+title("Force Deformation curve of a SDOF system subjected to El Centro earthquake", 'fontsize',16);
+xlabel('Displacement in ''m''', 'fontsize',16)
+ylabel('Force in ''kN''', 'fontsize',16)
+grid minor;
